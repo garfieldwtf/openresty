@@ -3,8 +3,8 @@
 FROM alpine:latest
 
 # Set environment variables for OpenResty and NGINX versions
-ENV OPENRESTY_VERSION 1.21.4.2
-ENV NGINX_VERSION 1.25.3
+ENV OPENRESTY_VERSION 1.27.1.2
+ENV NGINX_VERSION 1.27.1
 
 # Install required packages and build dependencies
 RUN apk update && apk upgrade && apk add --no-cache \
