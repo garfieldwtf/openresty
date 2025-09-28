@@ -15,7 +15,8 @@ env:
   IMAGE_NAME: ${{ github.repository }}
   DOCKERHUB_IMAGE_NAME: garfieldwtf/openresty
   QUAY_IMAGE_NAME: garfieldwtf/openresty
-  OPENRESTY_VERSION: 1.21.4.1  # Default version, can be overridden
+  OPENRESTY_VERSION: 1.25.3.2
+  NGINX_VERSION: 1.9.7
 
 jobs:
   test:
@@ -31,19 +32,16 @@ jobs:
         test -f Dockerfile || exit 1
         echo "✓ Dockerfile present"
         
-        # Test basic build
-        docker build -t openresty-test .
+        # Test basic build with correct versions
+        docker build \
+          --build-arg OPENRESTY_VERSION=${{ env.OPENRESTY_VERSION }} \
+          --build-arg NGINX_VERSION=${{ env.NGINX_VERSION }} \
+          -t openresty-test .
         
-        # Test with different OpenResty versions if version file exists
-        if [ -f "OPENRESTY_VERSIONS" ]; then
-          echo "Testing multiple OpenResty versions..."
-          while IFS= read -r version; do
-            if [ -n "$version" ]; then
-              echo "Testing OpenResty version: $version"
-              docker build --build-arg OPENRESTY_VERSION=$version -t openresty-test-$version .
-            fi
-          done < OPENRESTY_VERSIONS
-        fi
+        # Test that OpenResty and Nginx versions are correct
+        echo "Testing OpenResty and Nginx versions..."
+        docker run --rm openresty-test /usr/local/openresty/nginx/sbin/nginx -v 2>&1 | grep -q "openresty/${{ env.OPENRESTY_VERSION }}" && echo "✅ OpenResty version correct" || echo "❌ OpenResty version mismatch"
+        docker run --rm openresty-test /usr/local/openresty/nginx/sbin/nginx -v 2>&1 | grep -q "nginx/${{ env.NGINX_VERSION }}" && echo "✅ Nginx version correct" || echo "❌ Nginx version mismatch"
 
   build-ghcr:
     name: Build for GHCR (All Tags)
@@ -83,6 +81,7 @@ jobs:
           type=sha
           type=raw,value=latest,enable={{is_default_branch}}
           type=raw,value=${{ env.OPENRESTY_VERSION }},enable={{is_default_branch}}
+          type=raw,value=${{ env.OPENRESTY_VERSION }}-nginx-${{ env.NGINX_VERSION }},enable={{is_default_branch}}
 
     - name: Build and push to GHCR
       uses: docker/build-push-action@v5
@@ -102,6 +101,7 @@ jobs:
         labels: ${{ steps.meta-ghcr.outputs.labels }}
         build-args: |
           OPENRESTY_VERSION=${{ env.OPENRESTY_VERSION }}
+          NGINX_VERSION=${{ env.NGINX_VERSION }}
         cache-from: type=gha
         cache-to: type=gha,mode=max
 
@@ -153,6 +153,7 @@ jobs:
         tags: |
           ${{ env.REGISTRY_DOCKERHUB }}/${{ env.DOCKERHUB_IMAGE_NAME }}:latest
           ${{ env.REGISTRY_DOCKERHUB }}/${{ env.DOCKERHUB_IMAGE_NAME }}:${{ env.OPENRESTY_VERSION }}
+          ${{ env.REGISTRY_DOCKERHUB }}/${{ env.DOCKERHUB_IMAGE_NAME }}:${{ env.OPENRESTY_VERSION }}-nginx-${{ env.NGINX_VERSION }}
           ${{ env.REGISTRY_DOCKERHUB }}/${{ env.DOCKERHUB_IMAGE_NAME }}:${{ env.OPENRESTY_VERSION }}-386
           ${{ env.REGISTRY_DOCKERHUB }}/${{ env.DOCKERHUB_IMAGE_NAME }}:${{ env.OPENRESTY_VERSION }}-amd64
           ${{ env.REGISTRY_DOCKERHUB }}/${{ env.DOCKERHUB_IMAGE_NAME }}:${{ env.OPENRESTY_VERSION }}-armv6
@@ -163,6 +164,7 @@ jobs:
           ${{ env.REGISTRY_DOCKERHUB }}/${{ env.DOCKERHUB_IMAGE_NAME }}:${{ env.OPENRESTY_VERSION }}-s390x
           ${{ env.REGISTRY_QUAY }}/${{ env.QUAY_IMAGE_NAME }}:latest
           ${{ env.REGISTRY_QUAY }}/${{ env.QUAY_IMAGE_NAME }}:${{ env.OPENRESTY_VERSION }}
+          ${{ env.REGISTRY_QUAY }}/${{ env.QUAY_IMAGE_NAME }}:${{ env.OPENRESTY_VERSION }}-nginx-${{ env.NGINX_VERSION }}
           ${{ env.REGISTRY_QUAY }}/${{ env.QUAY_IMAGE_NAME }}:${{ env.OPENRESTY_VERSION }}-386
           ${{ env.REGISTRY_QUAY }}/${{ env.QUAY_IMAGE_NAME }}:${{ env.OPENRESTY_VERSION }}-amd64
           ${{ env.REGISTRY_QUAY }}/${{ env.QUAY_IMAGE_NAME }}:${{ env.OPENRESTY_VERSION }}-armv6
@@ -173,6 +175,7 @@ jobs:
           ${{ env.REGISTRY_QUAY }}/${{ env.QUAY_IMAGE_NAME }}:${{ env.OPENRESTY_VERSION }}-s390x
         build-args: |
           OPENRESTY_VERSION=${{ env.OPENRESTY_VERSION }}
+          NGINX_VERSION=${{ env.NGINX_VERSION }}
         cache-from: type=gha
         cache-to: type=gha,mode=max
 
@@ -202,12 +205,13 @@ jobs:
     - name: Verify all registries and tags
       run: |
         # Define tags to verify
-        tags=("latest" "${{ env.OPENRESTY_VERSION }}" "${{ env.OPENRESTY_VERSION }}-386" "${{ env.OPENRESTY_VERSION }}-amd64" "${{ env.OPENRESTY_VERSION }}-armv6" "${{ env.OPENRESTY_VERSION }}-armv7" "${{ env.OPENRESTY_VERSION }}-arm64" "${{ env.OPENRESTY_VERSION }}-ppc64le" "${{ env.OPENRESTY_VERSION }}-riscv64" "${{ env.OPENRESTY_VERSION }}-s390x")
+        tags=("latest" "${{ env.OPENRESTY_VERSION }}" "${{ env.OPENRESTY_VERSION }}-nginx-${{ env.NGINX_VERSION }}" "${{ env.OPENRESTY_VERSION }}-386" "${{ env.OPENRESTY_VERSION }}-amd64" "${{ env.OPENRESTY_VERSION }}-armv6" "${{ env.OPENRESTY_VERSION }}-armv7" "${{ env.OPENRESTY_VERSION }}-arm64" "${{ env.OPENRESTY_VERSION }}-ppc64le" "${{ env.OPENRESTY_VERSION }}-riscv64" "${{ env.OPENRESTY_VERSION }}-s390x")
         
         # Define platform mapping for each tag
         declare -A tag_platforms=(
           ["latest"]="linux/amd64"
           ["${{ env.OPENRESTY_VERSION }}"]="linux/amd64"
+          ["${{ env.OPENRESTY_VERSION }}-nginx-${{ env.NGINX_VERSION }}"]="linux/amd64"
           ["${{ env.OPENRESTY_VERSION }}-386"]="linux/386"
           ["${{ env.OPENRESTY_VERSION }}-amd64"]="linux/amd64"
           ["${{ env.OPENRESTY_VERSION }}-armv6"]="linux/arm/v6"
@@ -221,6 +225,7 @@ jobs:
         declare -A expected_arch=(
           ["latest"]="amd64"
           ["${{ env.OPENRESTY_VERSION }}"]="amd64"
+          ["${{ env.OPENRESTY_VERSION }}-nginx-${{ env.NGINX_VERSION }}"]="amd64"
           ["${{ env.OPENRESTY_VERSION }}-386"]="386"
           ["${{ env.OPENRESTY_VERSION }}-amd64"]="amd64"
           ["${{ env.OPENRESTY_VERSION }}-armv6"]="arm"
@@ -259,10 +264,18 @@ jobs:
                 # Additional OpenResty version verification
                 if [[ "$tag" == *"${{ env.OPENRESTY_VERSION }}"* ]] || [[ "$tag" == "latest" ]]; then
                   VERSION_RESULT=$(docker run --rm --platform "$platform" "$IMAGE_TAG" /usr/local/openresty/nginx/sbin/nginx -v 2>&1 || true)
-                  if echo "$VERSION_RESULT" | grep -q "openresty"; then
-                    echo "✅ OpenResty version verified in $tag"
+                  if echo "$VERSION_RESULT" | grep -q "openresty/${{ env.OPENRESTY_VERSION }}"; then
+                    echo "✅ OpenResty version verified: ${{ env.OPENRESTY_VERSION }}"
                   else
-                    echo "⚠️  Could not verify OpenResty version in $tag"
+                    echo "❌ OpenResty version mismatch in $tag"
+                    exit 1
+                  fi
+                  
+                  if echo "$VERSION_RESULT" | grep -q "nginx/${{ env.NGINX_VERSION }}"; then
+                    echo "✅ Nginx version verified: ${{ env.NGINX_VERSION }}"
+                  else
+                    echo "❌ Nginx version mismatch in $tag"
+                    exit 1
                   fi
                 fi
               else
@@ -339,81 +352,86 @@ jobs:
         create_multiarch_manifest() {
           local registry=$1
           local image_name=$2
-          local version=$3
+          local openresty_version=$3
+          local nginx_version=$4
           
           echo "Creating multi-architecture manifests for $registry/$image_name"
           
           # Create manifest list for 'latest' tag with all architectures
           docker manifest create $registry/$image_name:latest \
-            --amend $registry/$image_name:$version-386 \
-            --amend $registry/$image_name:$version-amd64 \
-            --amend $registry/$image_name:$version-armv6 \
-            --amend $registry/$image_name:$version-armv7 \
-            --amend $registry/$image_name:$version-arm64 \
-            --amend $registry/$image_name:$version-ppc64le \
-            --amend $registry/$image_name:$version-riscv64 \
-            --amend $registry/$image_name:$version-s390x
+            --amend $registry/$image_name:$openresty_version-386 \
+            --amend $registry/$image_name:$openresty_version-amd64 \
+            --amend $registry/$image_name:$openresty_version-armv6 \
+            --amend $registry/$image_name:$openresty_version-armv7 \
+            --amend $registry/$image_name:$openresty_version-arm64 \
+            --amend $registry/$image_name:$openresty_version-ppc64le \
+            --amend $registry/$image_name:$openresty_version-riscv64 \
+            --amend $registry/$image_name:$openresty_version-s390x
           
           # Create manifest list for version tag with all architectures
-          docker manifest create $registry/$image_name:$version \
-            --amend $registry/$image_name:$version-386 \
-            --amend $registry/$image_name:$version-amd64 \
-            --amend $registry/$image_name:$version-armv6 \
-            --amend $registry/$image_name:$version-armv7 \
-            --amend $registry/$image_name:$version-arm64 \
-            --amend $registry/$image_name:$version-ppc64le \
-            --amend $registry/$image_name:$version-riscv64 \
-            --amend $registry/$image_name:$version-s390x
+          docker manifest create $registry/$image_name:$openresty_version \
+            --amend $registry/$image_name:$openresty_version-386 \
+            --amend $registry/$image_name:$openresty_version-amd64 \
+            --amend $registry/$image_name:$openresty_version-armv6 \
+            --amend $registry/$image_name:$openresty_version-armv7 \
+            --amend $registry/$image_name:$openresty_version-arm64 \
+            --amend $registry/$image_name:$openresty_version-ppc64le \
+            --amend $registry/$image_name:$openresty_version-riscv64 \
+            --amend $registry/$image_name:$openresty_version-s390x
+          
+          # Create manifest list for version+nginx tag with all architectures
+          docker manifest create $registry/$image_name:$openresty_version-nginx-$nginx_version \
+            --amend $registry/$image_name:$openresty_version-386 \
+            --amend $registry/$image_name:$openresty_version-amd64 \
+            --amend $registry/$image_name:$openresty_version-armv6 \
+            --amend $registry/$image_name:$openresty_version-armv7 \
+            --amend $registry/$image_name:$openresty_version-arm64 \
+            --amend $registry/$image_name:$openresty_version-ppc64le \
+            --amend $registry/$image_name:$openresty_version-riscv64 \
+            --amend $registry/$image_name:$openresty_version-s390x
           
           # Push the manifests
           docker manifest push $registry/$image_name:latest
-          docker manifest push $registry/$image_name:$version
+          docker manifest push $registry/$image_name:$openresty_version
+          docker manifest push $registry/$image_name:$openresty_version-nginx-$nginx_version
           
-          echo "✅ Multi-arch manifests created for $registry/$image_name:latest and :$version"
+          echo "✅ Multi-arch manifests created for $registry/$image_name"
         }
 
         # Create manifests for both registries
-        create_multiarch_manifest "${{ env.REGISTRY_DOCKERHUB }}" "${{ env.DOCKERHUB_IMAGE_NAME }}" "${{ env.OPENRESTY_VERSION }}"
-        create_multiarch_manifest "${{ env.REGISTRY_QUAY }}" "${{ env.QUAY_IMAGE_NAME }}" "${{ env.OPENRESTY_VERSION }}"
+        create_multiarch_manifest "${{ env.REGISTRY_DOCKERHUB }}" "${{ env.DOCKERHUB_IMAGE_NAME }}" "${{ env.OPENRESTY_VERSION }}" "${{ env.NGINX_VERSION }}"
+        create_multiarch_manifest "${{ env.REGISTRY_QUAY }}" "${{ env.QUAY_IMAGE_NAME }}" "${{ env.OPENRESTY_VERSION }}" "${{ env.NGINX_VERSION }}"
 
     - name: Verify manifests
       run: |
         # Verify the multi-arch manifests were created correctly
         echo "Verifying multi-architecture manifests..."
         
-        # Check Docker Hub manifests
-        docker manifest inspect ${{ env.REGISTRY_DOCKERHUB }}/${{ env.DOCKERHUB_IMAGE_NAME }}:latest > /dev/null
-        if [ $? -eq 0 ]; then
-          echo "✅ Docker Hub latest manifest verified"
-        else
-          echo "❌ Docker Hub latest manifest failed"
-          exit 1
-        fi
+        manifests=(
+          "latest"
+          "${{ env.OPENRESTY_VERSION }}"
+          "${{ env.OPENRESTY_VERSION }}-nginx-${{ env.NGINX_VERSION }}"
+        )
         
-        docker manifest inspect ${{ env.REGISTRY_DOCKERHUB }}/${{ env.DOCKERHUB_IMAGE_NAME }}:${{ env.OPENRESTY_VERSION }} > /dev/null
-        if [ $? -eq 0 ]; then
-          echo "✅ Docker Hub version manifest verified"
-        else
-          echo "❌ Docker Hub version manifest failed"
-          exit 1
-        fi
-        
-        # Check Quay.io manifests
-        docker manifest inspect ${{ env.REGISTRY_QUAY }}/${{ env.QUAY_IMAGE_NAME }}:latest > /dev/null
-        if [ $? -eq 0 ]; then
-          echo "✅ Quay.io latest manifest verified"
-        else
-          echo "❌ Quay.io latest manifest failed"
-          exit 1
-        fi
-        
-        docker manifest inspect ${{ env.REGISTRY_QUAY }}/${{ env.QUAY_IMAGE_NAME }}:${{ env.OPENRESTY_VERSION }} > /dev/null
-        if [ $? -eq 0 ]; then
-          echo "✅ Quay.io version manifest verified"
-        else
-          echo "❌ Quay.io version manifest failed"
-          exit 1
-        fi
+        for manifest in "${manifests[@]}"; do
+          # Check Docker Hub manifest
+          docker manifest inspect ${{ env.REGISTRY_DOCKERHUB }}/${{ env.DOCKERHUB_IMAGE_NAME }}:$manifest > /dev/null
+          if [ $? -eq 0 ]; then
+            echo "✅ Docker Hub $manifest manifest verified"
+          else
+            echo "❌ Docker Hub $manifest manifest failed"
+            exit 1
+          fi
+          
+          # Check Quay.io manifest
+          docker manifest inspect ${{ env.REGISTRY_QUAY }}/${{ env.QUAY_IMAGE_NAME }}:$manifest > /dev/null
+          if [ $? -eq 0 ]; then
+            echo "✅ Quay.io $manifest manifest verified"
+          else
+            echo "❌ Quay.io $manifest manifest failed"
+            exit 1
+          fi
+        done
 
   release:
     name: Create GitHub Release
@@ -452,20 +470,22 @@ jobs:
         echo "📦 Available Registries and Tags:"
         echo ""
         echo "🚀 Docker Hub:"
-        echo "   • garfieldwtf/openresty:latest                    (multi-arch)"
-        echo "   • garfieldwtf/openresty:${{ env.OPENRESTY_VERSION }}           (multi-arch)"
-        echo "   • garfieldwtf/openresty:${{ env.OPENRESTY_VERSION }}-386       (32-bit Intel/AMD)"
-        echo "   • garfieldwtf/openresty:${{ env.OPENRESTY_VERSION }}-amd64     (64-bit Intel/AMD)" 
-        echo "   • garfieldwtf/openresty:${{ env.OPENRESTY_VERSION }}-armv6     (ARMv6 devices)"
-        echo "   • garfieldwtf/openresty:${{ env.OPENRESTY_VERSION }}-armv7     (ARMv7 devices)"
-        echo "   • garfieldwtf/openresty:${{ env.OPENRESTY_VERSION }}-arm64     (ARM 64-bit)"
-        echo "   • garfieldwtf/openresty:${{ env.OPENRESTY_VERSION }}-ppc64le   (PowerPC 64-bit LE)"
-        echo "   • garfieldwtf/openresty:${{ env.OPENRESTY_VERSION }}-riscv64   (RISC-V 64-bit)"
-        echo "   • garfieldwtf/openresty:${{ env.OPENRESTY_VERSION }}-s390x     (IBM System/390)"
+        echo "   • garfieldwtf/openresty:latest                                  (multi-arch)"
+        echo "   • garfieldwtf/openresty:${{ env.OPENRESTY_VERSION }}                       (multi-arch)"
+        echo "   • garfieldwtf/openresty:${{ env.OPENRESTY_VERSION }}-nginx-${{ env.NGINX_VERSION }}   (multi-arch)"
+        echo "   • garfieldwtf/openresty:${{ env.OPENRESTY_VERSION }}-386                   (32-bit Intel/AMD)"
+        echo "   • garfieldwtf/openresty:${{ env.OPENRESTY_VERSION }}-amd64                 (64-bit Intel/AMD)" 
+        echo "   • garfieldwtf/openresty:${{ env.OPENRESTY_VERSION }}-armv6                 (ARMv6 devices)"
+        echo "   • garfieldwtf/openresty:${{ env.OPENRESTY_VERSION }}-armv7                 (ARMv7 devices)"
+        echo "   • garfieldwtf/openresty:${{ env.OPENRESTY_VERSION }}-arm64                 (ARM 64-bit)"
+        echo "   • garfieldwtf/openresty:${{ env.OPENRESTY_VERSION }}-ppc64le               (PowerPC 64-bit LE)"
+        echo "   • garfieldwtf/openresty:${{ env.OPENRESTY_VERSION }}-riscv64               (RISC-V 64-bit)"
+        echo "   • garfieldwtf/openresty:${{ env.OPENRESTY_VERSION }}-s390x                 (IBM System/390)"
         echo ""
         echo "🔮 Quay.io:"
         echo "   • quay.io/garfieldwtf/openresty:latest"
         echo "   • quay.io/garfieldwtf/openresty:${{ env.OPENRESTY_VERSION }}"
+        echo "   • quay.io/garfieldwtf/openresty:${{ env.OPENRESTY_VERSION }}-nginx-${{ env.NGINX_VERSION }}"
         echo "   • quay.io/garfieldwtf/openresty:${{ env.OPENRESTY_VERSION }}-386"
         echo "   • quay.io/garfieldwtf/openresty:${{ env.OPENRESTY_VERSION }}-amd64"
         echo "   • quay.io/garfieldwtf/openresty:${{ env.OPENRESTY_VERSION }}-armv6"
@@ -478,13 +498,16 @@ jobs:
         echo "📚 GHCR (GitHub Container Registry):"
         echo "   • All tags including commits, branches, and versions"
         echo ""
+        echo "⚡ Version Information:"
+        echo "   • OpenResty: ${{ env.OPENRESTY_VERSION }}"
+        echo "   • Nginx: ${{ env.NGINX_VERSION }}"
+        echo ""
         echo "🔍 Usage Examples:"
         echo "   docker pull garfieldwtf/openresty:${{ env.OPENRESTY_VERSION }}-arm64"
         echo "   docker pull quay.io/garfieldwtf/openresty:${{ env.OPENRESTY_VERSION }}-ppc64le"
         echo "   docker run --platform linux/riscv64 quay.io/garfieldwtf/openresty:${{ env.OPENRESTY_VERSION }}-riscv64"
         echo ""
         echo "🌐 Multi-Arch Usage:"
-        echo "   docker pull garfieldwtf/openresty:latest  # Automatically picks correct architecture"
-        echo "   docker pull garfieldwtf/openresty:${{ env.OPENRESTY_VERSION }}  # Version-specific multi-arch"
-        echo ""
-        echo "⚡ OpenResty Version: ${{ env.OPENRESTY_VERSION }}"
+        echo "   docker pull garfieldwtf/openresty:latest          # Automatically picks correct architecture"
+        echo "   docker pull garfieldwtf/openresty:${{ env.OPENRESTY_VERSION }}           # Version-specific multi-arch"
+        echo "   docker pull garfieldwtf/openresty:${{ env.OPENRESTY_VERSION }}-nginx-${{ env.NGINX_VERSION }} # Full version multi-arch"
