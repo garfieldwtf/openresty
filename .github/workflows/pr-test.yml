@@ -1,0 +1,194 @@
+name: PR Test - OpenResty Build Validation
+
+on:
+  pull_request:
+    branches: [ main, master ]
+  workflow_dispatch:  # Manual trigger
+
+env:
+  OPENRESTY_VERSION: 1.25.3.2
+  NGINX_VERSION: 1.9.7
+
+jobs:
+  validate-dockerfile:
+    name: Validate Dockerfile
+    runs-on: ubuntu-latest
+    
+    steps:
+    - name: Checkout code
+      uses: actions/checkout@v4
+
+    - name: Validate Dockerfile syntax
+      run: |
+        echo "🔍 Validating Dockerfile syntax..."
+        docker build --no-cache -t openresty-pr-test .
+        echo "✅ Dockerfile builds successfully"
+
+    - name: Check required files
+      run: |
+        echo "📁 Checking required files..."
+        required_files=("Dockerfile" "nginx.conf")
+        for file in "${required_files[@]}"; do
+          if [ -f "$file" ]; then
+            echo "✅ $file exists"
+          else
+            echo "❌ $file missing"
+            exit 1
+          fi
+        done
+
+    - name: Test OpenResty and Nginx versions
+      run: |
+        echo "🔍 Testing OpenResty and Nginx versions..."
+        docker build \
+          --build-arg OPENRESTY_VERSION=${{ env.OPENRESTY_VERSION }} \
+          --build-arg NGINX_VERSION=${{ env.NGINX_VERSION }} \
+          -t openresty-version-test .
+        
+        # Test version output
+        VERSION_OUTPUT=$(docker run --rm openresty-version-test /usr/local/openresty/nginx/sbin/nginx -v 2>&1)
+        echo "Version output: $VERSION_OUTPUT"
+        
+        if echo "$VERSION_OUTPUT" | grep -q "openresty/${{ env.OPENRESTY_VERSION }}"; then
+          echo "✅ OpenResty version matches: ${{ env.OPENRESTY_VERSION }}"
+        else
+          echo "❌ OpenResty version mismatch"
+          exit 1
+        fi
+        
+        if echo "$VERSION_OUTPUT" | grep -q "nginx/${{ env.NGINX_VERSION }}"; then
+          echo "✅ Nginx version matches: ${{ env.NGINX_VERSION }}"
+        else
+          echo "❌ Nginx version mismatch"
+          exit 1
+        fi
+
+  test-multi-platform:
+    name: Test Multi-Platform Build
+    runs-on: ubuntu-latest
+    
+    steps:
+    - name: Checkout code
+      uses: actions/checkout@v4
+
+    - name: Set up QEMU
+      uses: docker/setup-qemu-action@v3
+      with:
+        platforms: amd64,arm64
+
+    - name: Set up Docker Buildx
+      uses: docker/setup-buildx-action@v3
+
+    - name: Test multi-platform build
+      run: |
+        echo "🏗️ Testing multi-platform build..."
+        docker buildx build \
+          --platform linux/amd64,linux/arm64 \
+          --build-arg OPENRESTY_VERSION=${{ env.OPENRESTY_VERSION }} \
+          --build-arg NGINX_VERSION=${{ env.NGINX_VERSION }} \
+          --load \
+          -t openresty-multi-test .
+        echo "✅ Multi-platform build successful"
+
+  security-scan:
+    name: Security Scan
+    runs-on: ubuntu-latest
+    
+    steps:
+    - name: Checkout code
+      uses: actions/checkout@v4
+
+    - name: Build test image
+      run: |
+        docker build \
+          --build-arg OPENRESTY_VERSION=${{ env.OPENRESTY_VERSION }} \
+          --build-arg NGINX_VERSION=${{ env.NGINX_VERSION }} \
+          -t openresty-security-test .
+
+    - name: Run Trivy security scan
+      uses: aquasecurity/trivy-action@master
+      with:
+        image-ref: 'openresty-security-test'
+        format: 'sarif'
+        output: 'trivy-results.sarif'
+        severity: 'CRITICAL,HIGH'
+
+    - name: Upload Trivy scan results to GitHub Security tab
+      uses: github/codeql-action/upload-sarif@v2
+      with:
+        sarif_file: 'trivy-results.sarif'
+      if: always()
+
+  functionality-test:
+    name: Functionality Test
+    runs-on: ubuntu-latest
+    
+    steps:
+    - name: Checkout code
+      uses: actions/checkout@v4
+
+    - name: Build test image
+      run: |
+        docker build \
+          --build-arg OPENRESTY_VERSION=${{ env.OPENRESTY_VERSION }} \
+          --build-arg NGINX_VERSION=${{ env.NGINX_VERSION }} \
+          -t openresty-functional-test .
+
+    - name: Test nginx configuration
+      run: |
+        echo "🔧 Testing nginx configuration..."
+        docker run --rm openresty-functional-test /usr/local/openresty/nginx/sbin/nginx -t
+        echo "✅ Nginx configuration test passed"
+
+    - name: Test LuaJIT availability
+      run: |
+        echo "🔧 Testing LuaJIT..."
+        docker run --rm openresty-functional-test /usr/local/openresty/luajit/bin/luajit -v
+        echo "✅ LuaJIT test passed"
+
+    - name: Test basic HTTP functionality
+      run: |
+        echo "🌐 Testing basic HTTP functionality..."
+        # Start container in background
+        CONTAINER_ID=$(docker run -d -p 8080:80 openresty-functional-test)
+        sleep 5
+        
+        # Test if nginx is responding
+        if curl -f http://localhost:8080 > /dev/null 2>&1; then
+          echo "✅ HTTP functionality test passed"
+        else
+          echo "❌ HTTP functionality test failed"
+          docker logs $CONTAINER_ID
+          exit 1
+        fi
+        
+        # Cleanup
+        docker stop $CONTAINER_ID
+        docker rm $CONTAINER_ID
+
+  pr-summary:
+    name: PR Test Summary
+    runs-on: ubuntu-latest
+    needs: [validate-dockerfile, test-multi-platform, security-scan, functionality-test]
+    if: always()
+    
+    steps:
+    - name: PR Test Summary
+      run: |
+        echo "📊 PR Test Summary for OpenResty"
+        echo ""
+        echo "✅ All tests completed for PR #${{ github.event.pull_request.number }}"
+        echo ""
+        echo "🔍 Tests performed:"
+        echo "   • Dockerfile validation and build"
+        echo "   • Multi-platform build capability"
+        echo "   • Security vulnerability scanning"
+        echo "   • OpenResty/Nginx version verification"
+        echo "   • Configuration validation"
+        echo "   • Basic functionality testing"
+        echo ""
+        echo "⚡ Version Information:"
+        echo "   • OpenResty: ${{ env.OPENRESTY_VERSION }}"
+        echo "   • Nginx: ${{ env.NGINX_VERSION }}"
+        echo ""
+        echo "📝 Note: This is a test build. No images are pushed to registries."
